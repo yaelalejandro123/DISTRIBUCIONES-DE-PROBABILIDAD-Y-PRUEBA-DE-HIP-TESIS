@@ -6,7 +6,7 @@ import streamlit as st
 from data_loader import cargar_datos, generar_datos_sinteticos, obtener_columnas_numericas
 from visualization import mostrar_distribucion
 from stats_tests import ejecutar_prueba_z, visualizar_prueba_z
-from ai_module import analizar_con_gemini
+from ai_module import analizar_con_ia
 
 # ─────────────────────────────────────────────
 # Configuración de la página
@@ -181,11 +181,8 @@ with st.sidebar:
     )
 
     st.markdown("---")
-
-    # API Key de Gemini
-    st.markdown("**Google Gemini API Key**")
-    gemini_key = st.text_input("API Key", type="password", placeholder="AIza...")
-    st.caption("Necesaria para el análisis con IA.")
+    st.markdown("🤖 **Análisis con IA habilitado**")
+    st.caption("Powered by OpenRouter · Mistral 7B")
 
 
 # ─────────────────────────────────────────────
@@ -308,29 +305,25 @@ if datos is not None and len(datos) >= 30:
         # ─────────────────────────────────────────────
         # PASO 6 — Análisis con IA
         # ─────────────────────────────────────────────
-        st.markdown("## 6 · Análisis con Gemini AI")
+        st.markdown("## 6 · Análisis con IA")
 
-        if not gemini_key:
-            st.warning("⚠️ Ingresa tu API Key de Gemini en el sidebar para habilitar el análisis con IA.")
-        else:
-            if st.button("🤖 Generar análisis con IA"):
-                with st.spinner("Consultando a Gemini..."):
-                    respuesta, error_ia = analizar_con_gemini(
-                        api_key=gemini_key,
-                        media_muestral=r["media_muestral"],
-                        mu_0=p["mu_0"],
-                        n=r["n"],
-                        sigma=p["sigma"],
-                        alpha=p["alpha"],
-                        tipo_prueba=p["tipo_prueba"],
-                        z_stat=r["z_stat"],
-                        p_value=r["p_value"],
-                        decision=r["decision"]
-                    )
-                if error_ia:
-                    st.error(f"❌ Error al consultar Gemini: {error_ia}")
-                else:
-                    st.markdown(f'<div class="ai-box">🤖 <b>Gemini:</b><br><br>{respuesta}</div>', unsafe_allow_html=True)
+        if st.button("🤖 Generar análisis con IA"):
+            with st.spinner("Consultando al modelo..."):
+                respuesta, error_ia = analizar_con_ia(
+                    media_muestral=r["media_muestral"],
+                    mu_0=p["mu_0"],
+                    n=r["n"],
+                    sigma=p["sigma"],
+                    alpha=p["alpha"],
+                    tipo_prueba=p["tipo_prueba"],
+                    z_stat=r["z_stat"],
+                    p_value=r["p_value"],
+                    decision=r["decision"]
+                )
+            if error_ia:
+                st.error(f"❌ {error_ia}")
+            else:
+                st.markdown(f'<div class="ai-box">🤖 <b>Análisis:</b><br><br>{respuesta}</div>', unsafe_allow_html=True)
 
 elif datos is not None and len(datos) < 30:
     st.warning("⚠️ La prueba Z requiere al menos 30 observaciones (n ≥ 30). Aumenta el tamaño de la muestra.")
