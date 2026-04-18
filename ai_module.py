@@ -1,14 +1,31 @@
 """
-ai_module.py — Integración con Google Gemini para análisis estadístico.
+ai_module.py — Integración con OpenRouter para análisis estadístico.
 
-Solo se envía un resumen estadístico, NO los datos crudos.
+La API key se carga desde el archivo .env (OPENROUTER_API_KEY).
+Los usuarios NO necesitan ingresar ninguna key — está configurada globalmente.
+Solo se envía un resumen estadístico, NUNCA datos crudos.
 """
 
+import os
 import requests
-import json
 
 
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+def _cargar_env():
+    """Carga variables del archivo .env sin dependencias externas."""
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, _, val = line.partition("=")
+                    os.environ.setdefault(key.strip(), val.strip())
+
+_cargar_env()
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+MODEL = "mistralai/mistral-7b-instruct"
 
 
 def _construir_prompt(
@@ -22,13 +39,7 @@ def _construir_prompt(
     p_value: float,
     decision: str
 ) -> str:
-    """
-    Construye el prompt que se enviará a Gemini.
-    Solo incluye el resumen estadístico, no datos individuales.
-
-    Returns:
-        String con el prompt completo.
-    """
+    """Construye el prompt con solo el resumen estadístico."""
     return f"""Se realizó una prueba Z de una muestra con los siguientes parámetros estadísticos:
 
 - Media muestral (x̄) = {media_muestral:.4f}
@@ -41,7 +52,7 @@ def _construir_prompt(
 - p-value = {p_value:.4f}
 - Decisión estadística: {decision}
 
-Por favor responde lo siguiente de forma clara, estructurada y en español:
+Por favor responde en español, de forma clara y estructurada:
 1. ¿Se rechaza H₀? Explica la razón basándote en el estadístico Z y el p-value.
 2. ¿Son razonables los supuestos de esta prueba (n ≥ 30, σ conocida)?
 3. Interpreta el resultado en lenguaje accesible para un estudiante de estadística.
@@ -50,8 +61,7 @@ Por favor responde lo siguiente de forma clara, estructurada y en español:
 Sé preciso, pedagógico y conciso. Máximo 250 palabras."""
 
 
-def analizar_con_gemini(
-    api_key: str,
+def analizar_con_ia(
     media_muestral: float,
     mu_0: float,
     n: int,
@@ -63,72 +73,68 @@ def analizar_con_gemini(
     decision: str
 ) -> tuple[str | None, str | None]:
     """
-    Envía el resumen estadístico a Gemini y retorna su análisis.
-
-    Args:
-        api_key: Clave de API de Google Gemini.
-        (Resto de parámetros): Resultados de la prueba Z.
+    Envía el resumen estadístico a OpenRouter y retorna el análisis.
+    No requiere API key del usuario — usa la key del servidor (.env).
 
     Returns:
         (respuesta_texto, None) si fue exitoso.
         (None, mensaje_error) si ocurrió un error.
     """
-    if not api_key or not api_key.strip():
-        return None, "API Key vacía o inválida."
+    if not OPENROUTER_API_KEY:
+        return None, "API key no configurada. Agrega OPENROUTER_API_KEY en el archivo .env"
 
     prompt = _construir_prompt(
-        media_muestral=media_muestral,
-        mu_0=mu_0,
-        n=n,
-        sigma=sigma,
-        alpha=alpha,
-        tipo_prueba=tipo_prueba,
-        z_stat=z_stat,
-        p_value=p_value,
-        decision=decision
+        media_muestral=media_muestral, mu_0=mu_0, n=n, sigma=sigma,
+        alpha=alpha, tipo_prueba=tipo_prueba, z_stat=z_stat,
+        p_value=p_value, decision=decision
     )
 
-    payload = {
-        "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
-        ],
-        "generationConfig": {
-            "temperature": 0.4,
-            "maxOutputTokens": 600,
-        }
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://estadistica-interactiva.app",
+        "X-Title": "Análisis Estadístico Interactivo"
     }
 
-    headers = {"Content-Type": "application/json"}
-    url_con_key = f"{GEMINI_URL}?key={api_key.strip()}"
+    payload = {
+        "model": MODEL,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Eres un profesor de estadística universitario. "
+                    "Explicas pruebas de hipótesis de forma clara, precisa y pedagógica en español."
+                )
+            },
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 600,
+        "temperature": 0.4,
+    }
 
     try:
-        response = requests.post(url_con_key, headers=headers, json=payload, timeout=30)
+        response = requests.post(OPENROUTER_URL, headers=headers, json=payload, timeout=30)
 
         if response.status_code == 200:
             data = response.json()
-            # Extraer texto de la respuesta
             try:
-                texto = data["candidates"][0]["content"]["parts"][0]["text"]
+                texto = data["choices"][0]["message"]["content"]
                 return texto.strip(), None
             except (KeyError, IndexError) as e:
-                return None, f"Respuesta inesperada de Gemini: {e}. Respuesta: {json.dumps(data)[:300]}"
+                return None, f"Respuesta inesperada del modelo: {e}"
 
-        elif response.status_code == 400:
-            return None, "Error 400: Solicitud inválida. Verifica el formato del prompt."
-        elif response.status_code == 403:
-            return None, "Error 403: API Key inválida o sin permisos para Gemini."
+        elif response.status_code == 401:
+            return None, "Error 401: API key inválida o expirada. Actualiza el archivo .env"
+        elif response.status_code == 402:
+            return None, "Error 402: Créditos insuficientes en OpenRouter."
         elif response.status_code == 429:
-            return None, "Error 429: Límite de solicitudes alcanzado. Intenta en unos minutos."
+            return None, "Error 429: Límite de solicitudes alcanzado. Intenta en unos momentos."
         else:
             return None, f"Error HTTP {response.status_code}: {response.text[:300]}"
 
     except requests.exceptions.ConnectionError:
         return None, "Error de conexión. Verifica tu conexión a internet."
     except requests.exceptions.Timeout:
-        return None, "Tiempo de espera agotado. La API tardó demasiado en responder."
-    except requests.exceptions.RequestException as e:
-        return None, f"Error al conectar con Gemini: {e}"
+        return None, "Tiempo de espera agotado (30s). Intenta de nuevo."
     except Exception as e:
         return None, f"Error inesperado: {e}"
